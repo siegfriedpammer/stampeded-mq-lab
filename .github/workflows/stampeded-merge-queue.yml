@@ -118,13 +118,25 @@ jobs:
               method=$(printf '%s' "$QDOC" | jq -r ".entries[$i].method")
               head=$(printf '%s'   "$QDOC" | jq -r ".entries[$i].headSha")
 
-              if ! info=$(gh pr view "$pr" --json state,mergeable,mergeStateStatus,headRefOid 2>&1); then
-                echo "queue: #$pr - GitHub will not describe it: $info"
-                continue
-              fi
-              state=$(printf '%s' "$info" | jq -r .state)
-              mergeable=$(printf '%s' "$info" | jq -r .mergeable)
-              status=$(printf '%s' "$info" | jq -r .mergeStateStatus)
+              # GitHub recomputes mergeability in the background, and answers UNKNOWN while it
+              # is doing so - which is exactly the state every other entry is in for a few
+              # seconds after one of them lands. Taking UNKNOWN at face value would drain one
+              # entry per run and leave the rest for the next trigger.
+              for attempt in 1 2 3 4 5 6; do
+                if ! info=$(gh pr view "$pr" --json state,mergeable,mergeStateStatus,headRefOid 2>&1); then
+                  echo "queue: #$pr - GitHub will not describe it: $info"
+                  info=""
+                  break
+                fi
+                state=$(printf '%s' "$info" | jq -r .state)
+                mergeable=$(printf '%s' "$info" | jq -r .mergeable)
+                status=$(printf '%s' "$info" | jq -r .mergeStateStatus)
+                [ "$mergeable" != "UNKNOWN" ] && [ "$status" != "UNKNOWN" ] && break
+                [ "$state" = "MERGED" ] || [ "$state" = "CLOSED" ] && break
+                echo "queue: #$pr - GitHub is still working out whether it merges (attempt $attempt)"
+                sleep 5
+              done
+              [ -n "$info" ] || continue
 
               if [ "$state" = "MERGED" ] || [ "$state" = "CLOSED" ]; then
                 update "remove #$pr: already $(echo "$state" | tr '[:upper:]' '[:lower:]')" \
