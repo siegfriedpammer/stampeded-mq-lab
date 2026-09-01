@@ -123,7 +123,7 @@ jobs:
               # seconds after one of them lands. Taking UNKNOWN at face value would drain one
               # entry per run and leave the rest for the next trigger.
               for attempt in 1 2 3 4 5 6; do
-                if ! info=$(gh pr view "$pr" --json state,mergeable,mergeStateStatus,headRefOid 2>&1); then
+                if ! info=$(gh pr view "$pr" --json state,mergeable,mergeStateStatus,headRefOid,isDraft 2>&1); then
                   echo "queue: #$pr - GitHub will not describe it: $info"
                   info=""
                   break
@@ -146,6 +146,14 @@ jobs:
 
               if [ -n "$head" ] && [ "$(printf '%s' "$info" | jq -r .headRefOid)" != "$head" ]; then
                 echo "queue: #$pr - pushed to since it was queued; it needs queueing again"
+                continue
+              fi
+
+              # A draft reports CLEAN on a repository with no rule about drafts, so its own
+              # flag is the only reliable way to recognise one - and GitHub refuses to merge it
+              # whatever the status said.
+              if [ "$(printf '%s' "$info" | jq -r .isDraft)" = "true" ]; then
+                echo "queue: #$pr - still a draft; mark it ready for review first"
                 continue
               fi
 
